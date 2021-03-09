@@ -10235,12 +10235,17 @@ public final class WorkflowManager extends NodeContainer
     public void setConfigurationNodes(final Map<String, JsonValue> configuration)
         throws InvalidSettingsException, JsonException {
         setExternalParameterValues(configuration, DialogNode.class, i -> i.getParameterName(), (n, v) -> {
-            DialogNodeValue val = n.createEmptyDialogValue();
-            val.loadFromJson(v);
-            n.validateDialogValue(val);
+            if (v != null) {
+                DialogNodeValue val = n.createEmptyDialogValue();
+                val.loadFromJson(v);
+                n.validateDialogValue(val);
+            }
         }, (n, v) -> {
-            DialogNodeValue val = n.createEmptyDialogValue();
-            val.loadFromJson(v);
+            DialogNodeValue val = null;
+            if (v != null) {
+                val = n.createEmptyDialogValue();
+                val.loadFromJson(v);
+            }
             n.setDialogValue(val);
         }, false, false);
     }
@@ -10261,12 +10266,17 @@ public final class WorkflowManager extends NodeContainer
     public void setConfigurationNodesFromString(final Map<String, String> configuration)
         throws InvalidSettingsException, JsonException {
         setExternalParameterValues(configuration, DialogNode.class, i -> i.getParameterName(), (n, v) -> {
-            DialogNodeValue val = n.createEmptyDialogValue();
-            val.loadFromString(v);
-            n.validateDialogValue(val);
+            if (v != null) {
+                DialogNodeValue val = n.createEmptyDialogValue();
+                val.loadFromString(v);
+                n.validateDialogValue(val);
+            }
         }, (n, v) -> {
-            DialogNodeValue val = n.createEmptyDialogValue();
-            val.loadFromString(v);
+            DialogNodeValue val = null;
+            if (v != null) {
+                val = n.createEmptyDialogValue();
+                val.loadFromString(v);
+            }
             n.setDialogValue(val);
         }, false, false);
     }
