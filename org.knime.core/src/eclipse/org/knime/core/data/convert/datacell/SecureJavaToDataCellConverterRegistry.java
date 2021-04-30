@@ -48,10 +48,17 @@
  */
 package org.knime.core.data.convert.datacell;
 
+import static java.util.stream.Collectors.toList;
+
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.knime.core.data.DataType;
 
@@ -65,6 +72,9 @@ import org.knime.core.data.DataType;
  * @noreference This class is not intended to be referenced by clients.
  */
 public enum SecureJavaToDataCellConverterRegistry {
+        /**
+         * The singleton instance.
+         */
         INSTANCE;
 
     private final Map<Class<?>, List<FactoryItem>> m_bySourceType = new HashMap<>();
@@ -77,26 +87,188 @@ public enum SecureJavaToDataCellConverterRegistry {
         final Collection<JavaToDataCellConverterFactory<?>> availableConverters =
             JavaToDataCellConverterRegistry.getInstance().getAllFactories();
         for (JavaToDataCellConverterFactory<?> factory : availableConverters) {
-
+            register(factory);
         }
+        m_bySourceType.values().forEach(l -> l.sort(Comparator.naturalOrder()));
+        m_byDestType.values().forEach(l -> l.sort(Comparator.naturalOrder()));
+        m_byIdentifier.values().forEach(l -> l.sort(Comparator.naturalOrder()));
     }
 
     private void register(final JavaToDataCellConverterFactory<?> factory) {
-        if (factory instanceof FactoryMethodToDataCellConverterFactory) {
+        final FactoryItem factoryItem = createFactoryItem(factory);
+        // TODO log an error if we detect duplicates provided by KNIME developers?
+        m_bySourceType.computeIfAbsent(factory.getSourceType(), c -> new ArrayList<>()).add(factoryItem);
+        m_byDestType.computeIfAbsent(factory.getDestinationType(), c -> new ArrayList<>()).add(factoryItem);
+        m_byIdentifier.computeIfAbsent(factory.getIdentifier(), c -> new ArrayList<>()).add(factoryItem);
+    }
 
+    private static FactoryItem createFactoryItem(final JavaToDataCellConverterFactory<?> factory) {
+        if (factory instanceof FactoryMethodToDataCellConverterFactory) {
+            return createFactoryItemForAnnotationFactory((FactoryMethodToDataCellConverterFactory<?, ?>)factory);
+        } else {
+            return createFactoryItemForExtensionPointFactory(factory);
         }
     }
 
-    private void registerAnnotationBasedFactory(final FactoryMethodToDataCellConverterFactory<?, ?> factory) {
-
+    private static FactoryItem
+        createFactoryItemForAnnotationFactory(final FactoryMethodToDataCellConverterFactory<?, ?> factory) {
+        return new FactoryItem(factory, Origin.forClass(factory.getDeclaringClass()));
     }
 
-    private Origin extractOrigin(final Class<?> factoryClass) {
-        final String name = factoryClass.getName();
+    private static FactoryItem
+        createFactoryItemForExtensionPointFactory(final JavaToDataCellConverterFactory<?> factory) {
+        return new FactoryItem(factory, Origin.forClass(factory.getClass()));
     }
 
-    private enum Origin {
-            KNIME_CORE, KNIME_EXTENSION, COMMUNITY;
+    /**
+     * Retrieves the factories registered under the provided identifier.<br>
+     * The returned list is ordered by the origin of the factories, i.e. factories from org.knime.core come before
+     * factories from some KNIME extension and community factories come last.
+     *
+     * @param identifier String id of the converter factory to retrieve
+     * @return the factories registered under the provided identifier (the list is empty if the identifier is unknown)
+     */
+    public List<JavaToDataCellConverterFactory<?>> getConverterFactoriesByIdentifier(final String identifier) {
+        return getConverterFactoriesByIdentifier(identifier, EnumSet.allOf(Origin.class));
+    }
+
+    /**
+     * Retrieves the factories registered under the provided identifier from the provided {@link Origin origins}.<br>
+     * The returned list is ordered by the origin of the factories, i.e. factories from org.knime.core come before
+     * factories from some KNIME extension and community factories come last.
+     *
+     * @param identifier String id of the converter factory to retrieve
+     * @param origin {@link Origin} of the factories to return
+     * @param otherOrigins more origins to include
+     * @return the factories registered under the provided identifier from the provided origins (the list is empty if
+     *         the identifier is unknown or no such factory is provided by any of the origins)
+     */
+    public List<JavaToDataCellConverterFactory<?>> getConverterFactoriesByIdentifier(final String identifier,
+        final Origin origin, final Origin... otherOrigins) {
+        return getConverterFactoriesByIdentifier(identifier, EnumSet.of(origin, otherOrigins));
+    }
+
+    private List<JavaToDataCellConverterFactory<?>> getConverterFactoriesByIdentifier(final String identifier,
+        final Set<Origin> origins) {
+        return m_byIdentifier.getOrDefault(identifier, Collections.emptyList()).stream()//
+            .filter(f -> origins.contains(f.m_origin))//
+            .map(FactoryItem::getFactory)//
+            .collect(toList());
+    }
+
+    /**
+     * Retrieves the factories registered for the provided {@link DataType destinationType}.<br>
+     * The returned list is ordered by the origin of the factories, i.e. factories from org.knime.core come before
+     * factories from some KNIME extension and community factories come last.
+     *
+     * @param destinationType {@link DataType} for which to retrieve factories
+     * @return the factories registered for the provided {@link DataType destinationType} (the list is empty if there
+     *         are no factories for the destinationType)
+     */
+    public List<JavaToDataCellConverterFactory<?>>
+        getConverterFactoriesByDestinationType(final DataType destinationType) {
+        return getConverterFactoriesByDestinationType(destinationType, EnumSet.allOf(Origin.class));
+    }
+
+    /**
+     * Retrieves the factories registered for the provided {@link DataType destinationType} from the provided
+     * {@link Origin origins}.<br>
+     * The returned list is ordered by the origin of the factories, i.e. factories from org.knime.core come before
+     * factories from some KNIME extension and community factories come last.
+     *
+     * @param destinationType {@link DataType} for which to retrieve factories
+     * @param origin {@link Origin} of the factories to return
+     * @param otherOrigins more origins to include
+     * @return the factories registered for the provided {@link DataType destinationType} from the provided origins (the
+     *         list is empty if none of the origins provided a factory of destinationType)
+     */
+    public List<JavaToDataCellConverterFactory<?>> getConverterFactoriesByDestinationType(
+        final DataType destinationType, final Origin origin, final Origin... otherOrigins) {
+        return getConverterFactoriesByDestinationType(destinationType, EnumSet.of(origin, otherOrigins));
+    }
+
+    private List<JavaToDataCellConverterFactory<?>>
+        getConverterFactoriesByDestinationType(final DataType destinationType, final Set<Origin> origins) {
+        return m_byDestType.getOrDefault(destinationType, Collections.emptyList()).stream()//
+            .filter(f -> origins.contains(f.m_origin))//
+            .map(FactoryItem::getFactory)//
+            .collect(toList());
+    }
+
+    /**
+     * Retrieves the factories registered for the provided sourceType.<br>
+     * The returned list is ordered by the origin of the factories, i.e. factories from org.knime.core come before
+     * factories from some KNIME extension and community factories come last.
+     *
+     * @param sourceType for which to retrieve factories
+     * @return the factories registered for the provided sourceType (the list is empty if there are no factories for the
+     *         sourceType)
+     */
+    public <S> List<JavaToDataCellConverterFactory<S>> getConverterFactoriesBySourceType(final Class<S> sourceType) {
+        return getConverterFactoriesBySourceType(sourceType, EnumSet.allOf(Origin.class));
+    }
+
+    /**
+     * Retrieves the factories registered for the provided sourceType from the provided {@link Origin origins}.<br>
+     * The returned list is ordered by the origin of the factories, i.e. factories from org.knime.core come before
+     * factories from some KNIME extension and community factories come last.
+     *
+     * @param sourceType for which to retrieve factories
+     * @param origin {@link Origin} of the factories to return
+     * @param otherOrigins more origins to include
+     * @return the factories registered for the provided sourceType from the provided origins (the list is empty if none
+     *         of the origins provided a factory of sourceType)
+     */
+    public <S> List<JavaToDataCellConverterFactory<S>> getConverterFactoriesBySourceType(final Class<S> sourceType,
+        final Origin origin, final Origin... otherOrigins) {
+        return getConverterFactoriesBySourceType(sourceType, EnumSet.of(origin, otherOrigins));
+    }
+
+    @SuppressWarnings("unchecked") // the contract of JavaToDataCellConverterFactory ensures that the cast is safe
+    private <S> List<JavaToDataCellConverterFactory<S>> getConverterFactoriesBySourceType(final Class<S> sourceType,
+        final Set<Origin> origins) {
+        return m_bySourceType.getOrDefault(sourceType, Collections.emptyList()).stream()//
+            .filter(f -> origins.contains(f.m_origin))//
+            .map(FactoryItem::getFactory)//
+            .map(f -> (JavaToDataCellConverterFactory<S>)f)//
+            .collect(toList());
+    }
+
+    /**
+     * Classifies the origin of a {@link JavaToDataCellConverterFactory}.
+     *
+     * @author Adrian Nembach, KNIME GmbH, Konstanz, Germany
+     */
+    public enum Origin {
+            /**
+             * The factory was declared in KNIME core.
+             */
+            KNIME_CORE("org.knime.core."),
+            /**
+             * The factory was declared in a KNIME extension.
+             */
+            KNIME_EXTENSION("org.knime."),
+            /**
+             * The factory was declared in a community extension.
+             */
+            COMMUNITY("");
+
+        private String m_prefix;
+
+        private Origin(final String prefix) {
+            m_prefix = prefix;
+        }
+
+        static Origin forClass(final Class<?> factoryClass) {
+            final String name = factoryClass.getName();
+            for (Origin origin : values()) {
+                if (name.startsWith(origin.m_prefix)) {
+                    return origin;
+                }
+            }
+            throw new IllegalArgumentException(
+                "The provided factory class is not attributable to any known origin: " + factoryClass);
+        }
     }
 
     private static final class FactoryItem implements Comparable<FactoryItem> {
@@ -108,6 +280,10 @@ public enum SecureJavaToDataCellConverterRegistry {
         FactoryItem(final JavaToDataCellConverterFactory<?> factory, final Origin origin) {
             m_origin = origin;
             m_factory = factory;
+        }
+
+        private JavaToDataCellConverterFactory<?> getFactory() {
+            return m_factory;
         }
 
         @Override
