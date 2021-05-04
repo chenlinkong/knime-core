@@ -84,7 +84,8 @@ public enum SecureJavaToDataCellConverterRegistry {
          *
          */
     private static final String DUPLICATE_KNIME_CONVERTER_TEMPLATE =
-        "Duplicate JavaToDataCellConverter provided by KNIME detected: '%s' and '%s'. There should only ever be one such converter.";
+        "Duplicate JavaToDataCellConverter provided by KNIME detected: '%s' and '%s'. "
+        + "There should only ever be one such converter.";
 
     private static final NodeLogger LOGGER = NodeLogger.getLogger(SecureJavaToDataCellConverterRegistry.class);
 
