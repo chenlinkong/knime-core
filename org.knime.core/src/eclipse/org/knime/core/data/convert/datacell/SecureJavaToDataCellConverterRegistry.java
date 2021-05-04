@@ -61,6 +61,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.knime.core.data.DataType;
+import org.knime.core.node.NodeLogger;
 
 /**
  * A secure registry for {@link JavaToDataCellConverterFactory JavaToDataCellConverterFactories}.<br>
@@ -76,6 +77,16 @@ public enum SecureJavaToDataCellConverterRegistry {
          * The singleton instance.
          */
         INSTANCE;
+
+    // TODO use this class for save serialization of ProductionPaths
+
+    /**
+         *
+         */
+    private static final String DUPLICATE_KNIME_CONVERTER_TEMPLATE =
+        "Duplicate JavaToDataCellConverter provided by KNIME detected: '%s' and '%s'. There should only ever be one such converter.";
+
+    private static final NodeLogger LOGGER = NodeLogger.getLogger(SecureJavaToDataCellConverterRegistry.class);
 
     private final Map<Class<?>, List<FactoryItem>> m_bySourceType = new HashMap<>();
 
@@ -96,10 +107,23 @@ public enum SecureJavaToDataCellConverterRegistry {
 
     private void register(final JavaToDataCellConverterFactory<?> factory) {
         final FactoryItem factoryItem = createFactoryItem(factory);
-        // TODO log an error if we detect duplicates provided by KNIME developers?
+        checkForDuplicateKnimeConverters(factoryItem);
         m_bySourceType.computeIfAbsent(factory.getSourceType(), c -> new ArrayList<>()).add(factoryItem);
         m_byDestType.computeIfAbsent(factory.getDestinationType(), c -> new ArrayList<>()).add(factoryItem);
         m_byIdentifier.computeIfAbsent(factory.getIdentifier(), c -> new ArrayList<>()).add(factoryItem);
+    }
+
+    private void checkForDuplicateKnimeConverters(final FactoryItem factoryItem) {
+        Origin origin = factoryItem.m_origin;
+        final JavaToDataCellConverterFactory<?> factory = factoryItem.m_factory;
+        if (origin.isKnime() && m_bySourceType.containsKey(factory.getSourceType())) {
+            final DataType destinationType = factory.getDestinationType();
+            m_bySourceType.get(factory.getSourceType()).stream()//
+                .map(FactoryItem::getFactory).filter(f -> destinationType.equals(f.getDestinationType()))//
+                .findFirst()//
+                .ifPresent(f -> LOGGER.errorWithFormat(DUPLICATE_KNIME_CONVERTER_TEMPLATE, f.getIdentifier(),
+                    factory.getIdentifier()));
+        }
     }
 
     private static FactoryItem createFactoryItem(final JavaToDataCellConverterFactory<?> factory) {
@@ -243,20 +267,27 @@ public enum SecureJavaToDataCellConverterRegistry {
             /**
              * The factory was declared in KNIME core.
              */
-            KNIME_CORE("org.knime.core."),
+            KNIME_CORE("org.knime.core.", true),
             /**
              * The factory was declared in a KNIME extension.
              */
-            KNIME_EXTENSION("org.knime."),
+            KNIME_EXTENSION("org.knime.", true),
             /**
              * The factory was declared in a community extension.
              */
-            COMMUNITY("");
+            COMMUNITY("", false);
 
-        private String m_prefix;
+        private final String m_prefix;
 
-        private Origin(final String prefix) {
+        private final boolean m_isKnime;
+
+        private Origin(final String prefix, final boolean isKnime) {
             m_prefix = prefix;
+            m_isKnime = isKnime;
+        }
+
+        boolean isKnime() {
+            return m_isKnime;
         }
 
         static Origin forClass(final Class<?> factoryClass) {
