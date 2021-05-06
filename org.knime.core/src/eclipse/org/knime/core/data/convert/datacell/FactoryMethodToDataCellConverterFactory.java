@@ -165,7 +165,4 @@ class FactoryMethodToDataCellConverterFactory<F extends DataCellFactory, S>
         return m_cellFactoryClassName + "." + m_method.getName() + "(" + getSourceType() + ")";
     }
 
-    Class<?> getDeclaringClass() {
-        return m_method.getDeclaringClass();
-    }
 }
