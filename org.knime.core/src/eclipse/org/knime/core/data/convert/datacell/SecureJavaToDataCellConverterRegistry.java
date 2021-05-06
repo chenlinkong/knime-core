@@ -50,6 +50,8 @@ package org.knime.core.data.convert.datacell;
 
 import static java.util.stream.Collectors.toList;
 
+import java.lang.annotation.IncompleteAnnotationException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -58,10 +60,20 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
+import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.eclipse.core.runtime.IConfigurationElement;
+import org.eclipse.core.runtime.IContributor;
+import org.eclipse.core.runtime.Platform;
+import org.knime.core.data.DataCellFactory;
 import org.knime.core.data.DataType;
+import org.knime.core.data.DataTypeRegistry;
+import org.knime.core.data.convert.DataCellFactoryMethod;
+import org.knime.core.data.convert.util.ClassUtil;
 import org.knime.core.node.NodeLogger;
+import org.knime.core.util.Pair;
 
 /**
  * A secure registry for {@link JavaToDataCellConverterFactory JavaToDataCellConverterFactories}.<br>
@@ -72,22 +84,20 @@ import org.knime.core.node.NodeLogger;
  * @author Adrian Nembach, KNIME GmbH, Konstanz, Germany
  * @noreference This class is not intended to be referenced by clients.
  */
-public enum SecureJavaToDataCellConverterRegistry {
-        /**
-         * The singleton instance.
-         */
-        INSTANCE;
+public final class SecureJavaToDataCellConverterRegistry {
+
+    private static final NodeLogger LOGGER = NodeLogger.getLogger(SecureJavaToDataCellConverterRegistry.class);
+
+    /**
+     * The singleton instance.
+     */
+    public static final SecureJavaToDataCellConverterRegistry INSTANCE = new SecureJavaToDataCellConverterRegistry();
 
     // TODO use this class for save serialization of ProductionPaths
 
-    /**
-         *
-         */
     private static final String DUPLICATE_KNIME_CONVERTER_TEMPLATE =
         "Duplicate JavaToDataCellConverter provided by KNIME detected: '%s' and '%s'. "
-        + "There should only ever be one such converter.";
-
-    private static final NodeLogger LOGGER = NodeLogger.getLogger(SecureJavaToDataCellConverterRegistry.class);
+            + "There should only ever be one such converter.";
 
     private final Map<Class<?>, List<FactoryItem>> m_bySourceType = new HashMap<>();
 
@@ -96,18 +106,81 @@ public enum SecureJavaToDataCellConverterRegistry {
     private final Map<String, List<FactoryItem>> m_byIdentifier = new HashMap<>();
 
     private SecureJavaToDataCellConverterRegistry() {
-        final Collection<JavaToDataCellConverterFactory<?>> availableConverters =
-            JavaToDataCellConverterRegistry.getInstance().getAllFactories();
-        for (JavaToDataCellConverterFactory<?> factory : availableConverters) {
-            register(factory);
-        }
+        collectConverterFactories();
         m_bySourceType.values().forEach(l -> l.sort(Comparator.naturalOrder()));
         m_byDestType.values().forEach(l -> l.sort(Comparator.naturalOrder()));
         m_byIdentifier.values().forEach(l -> l.sort(Comparator.naturalOrder()));
     }
 
-    private void register(final JavaToDataCellConverterFactory<?> factory) {
-        final FactoryItem factoryItem = createFactoryItem(factory);
+    private void collectConverterFactories() {
+        parseAnnotations();
+        collectFromExtensionPoint();
+    }
+
+    private void parseAnnotations() {
+        final Collection<DataType> availableDataTypes = DataTypeRegistry.getInstance().availableDataTypes();
+        for (final DataType dataType : availableDataTypes) {
+            final Optional<DataCellFactory> cellFactory = dataType.getCellFactory(null);
+            if (cellFactory.isPresent()) {
+                extractFactoriesFromCellFactory(dataType, cellFactory.get().getClass());
+            }
+        }
+    }
+
+    private void extractFactoriesFromCellFactory(final DataType dataType,
+        final Class<? extends DataCellFactory> cellFactoryClass) {
+        for (final Pair<Method, DataCellFactoryMethod> pair : ClassUtil.getMethodsWithAnnotation(cellFactoryClass,
+            DataCellFactoryMethod.class)) {
+            registerFactoryMethodConverterFactory(dataType, pair.getFirst(), pair.getSecond());
+        }
+    }
+
+    private void registerFactoryMethodConverterFactory(final DataType dataType, final Method method,
+        final DataCellFactoryMethod annotation) {
+        try {
+            final FactoryMethodToDataCellConverterFactory<?, ?> factory = new FactoryMethodToDataCellConverterFactory<>(method,
+                ClassUtil.ensureObjectType(method.getParameterTypes()[0]), dataType, annotation.name());
+            // Check name of factory
+            if (!JavaToDataCellConverterRegistry.validateFactoryName(factory)) {
+                return;
+            }
+            register(factory, Origin.forClass(method.getDeclaringClass()));
+        } catch (IncompleteAnnotationException | NoSuchMethodException | SecurityException ex) {//NOSONAR
+            // JavaToDataCellConverterRegistry already logged the error, so wea aren't doing it again
+        }
+    }
+
+    private void collectFromExtensionPoint() {
+        for (final IConfigurationElement configurationElement : Platform.getExtensionRegistry()
+            .getConfigurationElementsFor(JavaToDataCellConverterRegistry.EXTENSION_POINT_ID)) {
+            registerExtensionPointFactory(configurationElement);
+        }
+    }
+
+    private void registerExtensionPointFactory(final IConfigurationElement configurationElement) {
+        try {
+            // the specified class may not implement ConverterFactory, so
+            // check this first
+            final Object extension = configurationElement.createExecutableExtension("factoryClass");
+            final IContributor contributor = configurationElement.getContributor();
+            if (extension instanceof JavaToDataCellConverterFactory) {
+                final JavaToDataCellConverterFactory<?> factory = (JavaToDataCellConverterFactory<?>)extension;
+                // Check name of factory
+                if (!JavaToDataCellConverterRegistry.validateFactoryName(factory)) {
+                    // JavaToDataCellConverterRegistry already logged a warning, so we aren't doing it again
+                    return;
+                }
+                register(factory, Origin.forContributorName(contributor.getName()));
+            } else {
+                // object was not an instance of ConverterFactory but JavaToDataCellConverterRegistry already logged the corresponding error
+            }
+        } catch (final Throwable e) {// NOSONAR
+            // JavaToDataCellConverterRegistry already logged the error, so we aren't logging it again
+        }
+    }
+
+    private void register(final JavaToDataCellConverterFactory<?> factory, final Origin origin) {
+        final FactoryItem factoryItem = new FactoryItem(factory, origin);
         checkForDuplicateKnimeConverters(factoryItem);
         m_bySourceType.computeIfAbsent(factory.getSourceType(), c -> new ArrayList<>()).add(factoryItem);
         m_byDestType.computeIfAbsent(factory.getDestinationType(), c -> new ArrayList<>()).add(factoryItem);
@@ -125,24 +198,6 @@ public enum SecureJavaToDataCellConverterRegistry {
                 .ifPresent(f -> LOGGER.errorWithFormat(DUPLICATE_KNIME_CONVERTER_TEMPLATE, f.getIdentifier(),
                     factory.getIdentifier()));
         }
-    }
-
-    private static FactoryItem createFactoryItem(final JavaToDataCellConverterFactory<?> factory) {
-        if (factory instanceof FactoryMethodToDataCellConverterFactory) {
-            return createFactoryItemForAnnotationFactory((FactoryMethodToDataCellConverterFactory<?, ?>)factory);
-        } else {
-            return createFactoryItemForExtensionPointFactory(factory);
-        }
-    }
-
-    private static FactoryItem
-        createFactoryItemForAnnotationFactory(final FactoryMethodToDataCellConverterFactory<?, ?> factory) {
-        return new FactoryItem(factory, Origin.forClass(factory.getDeclaringClass()));
-    }
-
-    private static FactoryItem
-        createFactoryItemForExtensionPointFactory(final JavaToDataCellConverterFactory<?> factory) {
-        return new FactoryItem(factory, Origin.forClass(factory.getClass()));
     }
 
     /**
@@ -291,15 +346,19 @@ public enum SecureJavaToDataCellConverterRegistry {
             return m_isKnime;
         }
 
-        static Origin forClass(final Class<?> factoryClass) {
-            final String name = factoryClass.getName();
+        static Origin forContributorName(final String contributorName) {
             for (Origin origin : values()) {
-                if (name.startsWith(origin.m_prefix)) {
+                if (contributorName.startsWith(origin.m_prefix)) {
                     return origin;
                 }
             }
-            throw new IllegalArgumentException(
-                "The provided factory class is not attributable to any known origin: " + factoryClass);
+            // never reached because Community matches everything
+            throw new IllegalArgumentException("No origin available for: " + contributorName);
+        }
+
+        static Origin forClass(final Class<?> factoryClass) {
+            final String name = factoryClass.getName();
+            return forContributorName(name);
         }
     }
 
@@ -321,6 +380,29 @@ public enum SecureJavaToDataCellConverterRegistry {
         @Override
         public int compareTo(final FactoryItem o) {
             return m_origin.compareTo(o.m_origin);
+        }
+
+        @Override
+        public boolean equals(final Object obj) {
+            if (obj == null) {
+                return false;
+            }
+            if (obj == this) {
+                return true;
+            }
+            if (obj instanceof FactoryItem) {
+                final FactoryItem other = (FactoryItem)obj;
+                return m_factory.equals(other.m_factory) && m_origin == other.m_origin;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return new HashCodeBuilder()//
+                    .append(m_factory)//
+                    .append(m_origin)//
+                    .toHashCode();
         }
     }
 }
