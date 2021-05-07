@@ -49,10 +49,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.UUID;
 
 import org.knime.core.data.DataCell;
 import org.knime.core.data.DataCellDataOutput;
 import org.knime.core.data.DataCellSerializer;
+import org.knime.core.data.container.BlobDataCell;
+import org.knime.core.data.container.BlobDataCell.BlobAddress;
 import org.knime.core.data.filestore.FileStore;
 import org.knime.core.data.filestore.FileStoreCell;
 import org.knime.core.data.filestore.FileStoreKey;
@@ -105,10 +108,33 @@ final class DataCellDataOutputDelegator extends OutputStream implements DataCell
         final DataCellSerializerInfo info = m_factory.getSerializer(cell);
         final DataCellSerializer<DataCell> serializer = info.getSerializer();
         write(info.getInternalIndex());
-        serializer.serialize(cell, this);
 
-        if (cell instanceof FileStoreCell) {
-            handleFileStoreCell((FileStoreCell)cell);
+        final DataCell actual;
+        if (info.isBlob()) {
+            final BlobDataCell blob = (BlobDataCell)cell;
+            final BlobAddress address = blob.getBlobAddress();
+
+            // we never saw this BlobCell before.
+            if (address == null || address.getFileStore() == null) {
+                // TODO check if compression can always be true.
+                final String id = UUID.randomUUID().toString();
+                final FileStore store = m_fsHandler.createFileStore(id);
+                BlobAddress.setFileStore(address, store);
+                actual = new WrappedBlobDataCell(cell, info, store);
+            } else {
+                // we have seen this BlobCell before. In the case of the columnar backend,
+                // the FileStore can't be non-null then.
+                final FileStore store = address.getFileStore();
+                actual = new WrappedBlobDataCell(cell, info, store);
+            }
+        } else {
+            actual = cell;
+            serializer.serialize(cell, this);
+        }
+
+        // in case it's a blob cell we've wrapped it.
+        if (actual instanceof FileStoreCell) {
+            handleFileStoreCell((FileStoreCell)actual);
         }
     }
 
@@ -181,4 +207,5 @@ final class DataCellDataOutputDelegator extends OutputStream implements DataCell
     public void writeUTF(final String s) throws IOException {
         m_delegate.writeUTF(s);
     }
+
 }

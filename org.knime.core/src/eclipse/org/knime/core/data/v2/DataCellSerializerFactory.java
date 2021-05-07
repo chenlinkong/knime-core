@@ -61,6 +61,7 @@ import org.knime.core.data.DataCellDataInput;
 import org.knime.core.data.DataCellDataOutput;
 import org.knime.core.data.DataCellSerializer;
 import org.knime.core.data.DataTypeRegistry;
+import org.knime.core.data.container.BlobDataCell;
 import org.knime.core.data.container.KNIMEStreamConstants;
 import org.knime.core.node.InvalidSettingsException;
 import org.knime.core.node.config.Config;
@@ -211,11 +212,14 @@ public final class DataCellSerializerFactory {
 
         private final byte m_internalIndex;
 
+        private final boolean m_isBlob;
+
         private DataCellSerializerInfo(final Class<? extends DataCell> cellType, final byte internalIndex,
             final DataCellSerializer<DataCell> serializer) {
             m_cellType = cellType;
             m_serializer = serializer;
             m_internalIndex = internalIndex;
+            m_isBlob = BlobDataCell.class.isAssignableFrom(m_cellType);
         }
 
         /**
@@ -231,6 +235,14 @@ public final class DataCellSerializerFactory {
          */
         public final byte getInternalIndex() {
             return m_internalIndex;
+        }
+
+        /**
+         * @return <source>true</source> if it is a blob cell
+         * @since 4.4
+         */
+        public boolean isBlob() {
+            return m_isBlob;
         }
 
         /**

@@ -58,6 +58,7 @@ import org.knime.core.data.filestore.FileStoreCell;
 import org.knime.core.data.filestore.FileStoreKey;
 import org.knime.core.data.filestore.FileStoreUtil;
 import org.knime.core.data.v2.DataCellSerializerFactory;
+import org.knime.core.data.v2.DataCellSerializerFactory.DataCellSerializerInfo;
 
 /**
  * {@link DataCellDataInput} implementation on {@link ByteArrayInputStream}.
@@ -84,16 +85,23 @@ final class DataCellDataInputDelegator extends InputStream implements DataCellDa
 
     @Override
     public DataCell readDataCell() throws IOException {
-        final DataCell result = m_factory.getSerializerByIdx(readByte()).getSerializer().deserialize(this);
+        final DataCellSerializerInfo info = m_factory.getSerializerByIdx(readByte());
+        final DataCell result;
+        if (info.isBlob()) {
+            result = new WrappedBlobDataCell(info);
+        } else {
+            result = info.getSerializer().deserialize(this);
+        }
+
         if (result instanceof FileStoreCell) {
             final FileStoreKey[] fileStoreKeys = readFileStoreKeys();
             final FileStoreCell fsCell = (FileStoreCell)result;
 
-            // call post contruct because cell is read from disc
+            // call post construct because cell is read from disc
             FileStoreUtil.retrieveFileStoreHandlersFrom(fsCell, fileStoreKeys, m_dataRepository);
         }
 
-        return result;
+        return info.isBlob() ? ((WrappedBlobDataCell)result).getDataCell() : result;
     }
 
     private FileStoreKey[] readFileStoreKeys() throws IOException {

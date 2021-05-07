@@ -53,6 +53,7 @@ import java.io.IOException;
 import java.io.Serializable;
 
 import org.knime.core.data.DataCell;
+import org.knime.core.data.filestore.FileStore;
 
 
 /**
@@ -118,7 +119,7 @@ public abstract class BlobDataCell extends DataCell {
      * if it hasn't been stored just yet.
      * @return This blob's address.
      */
-    BlobAddress getBlobAddress() {
+    public BlobAddress getBlobAddress() {
         return m_blobAddress;
     }
 
@@ -158,6 +159,18 @@ public abstract class BlobDataCell extends DataCell {
         private int m_indexOfBlobInColumn;
         private boolean m_isUseCompression;
 
+        // added for columnar backend implementation
+        private transient FileStore m_fStore;
+
+
+        BlobAddress(final FileStore fsKey, final boolean useCompression){
+            // indicates that we can overwrite the BlobAddress again with a new internal blob address
+            m_bufferID = -1;
+            m_column = -1;
+            m_fStore = fsKey;
+            m_isUseCompression = useCompression;
+        }
+
         /**
          * Create new address object.
          * @param bufferID ID of corresponding buffer.
@@ -170,6 +183,7 @@ public abstract class BlobDataCell extends DataCell {
             m_column = column;
             m_indexOfBlobInColumn = -1;
             m_isUseCompression = isUseCompression;
+            m_fStore = null;
         }
 
         /** Set the corresponding address.
@@ -190,6 +204,18 @@ public abstract class BlobDataCell extends DataCell {
         /** @return the column */
         int getColumn() {
             return m_column;
+        }
+
+        /**
+         * Return the transient FileStore associated with the BlobCell
+         *
+         * @return internally used for columnar backend. Can be null. Indicates either usage of old back-end or not set
+         *         by new back-end.
+         *
+         * @noreference This method is not intended to be referenced by clients.
+         */
+        public FileStore getFileStore() {
+            return m_fStore;
         }
 
         /** @return Whether or not the blob is (to be) compressed.
@@ -260,6 +286,44 @@ public abstract class BlobDataCell extends DataCell {
         public int hashCode() {
             return m_bufferID ^ (m_column << 8)
                 ^ (m_indexOfBlobInColumn << 16);
+        }
+
+
+        /**
+         * Creates a new BlobAddress with only internalId set. Used by new columnar backend. Legacy code.
+         *
+         * @param internalId the internalId, see {@link BlobAddress}{@link #getFileStore()}
+         * @param useCompression <source>true</source> if compression is enabled
+         * @return a new {@link BlobAddress}.
+         *
+         * @noreference This method is not intended to be referenced by clients.
+         */
+        public static BlobAddress create(final FileStore internalId, final boolean useCompression) {
+            return new BlobAddress(internalId, useCompression);
+        }
+
+        /**
+         * Set {@link BlobAddress} in {@link BlobDataCell}.
+         *
+         * @param address the address to set
+         * @param cell the blob cell
+         *
+         * @noreference This method is not intended to be referenced by clients.
+         */
+        public static void setAddress(final BlobAddress address, final BlobDataCell cell) {
+            cell.setBlobAddress(address);
+        }
+
+        /**
+         * Used for legacy purposes only
+         *
+         * @param address the actual address
+         * @param store the filestore associated with this address
+         *
+         * @noreference This method is not intended to be referenced by clients.
+         */
+        public static void setFileStore(final BlobAddress address, final FileStore store) {
+            address.m_fStore = store;
         }
     }
 }
