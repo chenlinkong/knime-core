@@ -86,14 +86,14 @@ import org.knime.core.util.Pair;
  * @author Adrian Nembach, KNIME GmbH, Konstanz, Germany
  * @noreference This class is not intended to be referenced by clients.
  */
-public final class SecureJavaToDataCellConverterRegistry {
+public final class OriginAwareJavaToDataCellConverterRegistry {
 
-    private static final NodeLogger LOGGER = NodeLogger.getLogger(SecureJavaToDataCellConverterRegistry.class);
+    private static final NodeLogger LOGGER = NodeLogger.getLogger(OriginAwareJavaToDataCellConverterRegistry.class);
 
     /**
      * The singleton instance.
      */
-    public static final SecureJavaToDataCellConverterRegistry INSTANCE = new SecureJavaToDataCellConverterRegistry();
+    public static final OriginAwareJavaToDataCellConverterRegistry INSTANCE = new OriginAwareJavaToDataCellConverterRegistry();
 
     // TODO use this class for save serialization of ProductionPaths
 
@@ -107,7 +107,7 @@ public final class SecureJavaToDataCellConverterRegistry {
 
     private final Map<String, List<FactoryItem>> m_byIdentifier = new HashMap<>();
 
-    private SecureJavaToDataCellConverterRegistry() {
+    private OriginAwareJavaToDataCellConverterRegistry() {
         collectConverterFactories();
         m_bySourceType.values().forEach(l -> l.sort(Comparator.naturalOrder()));
         m_byDestType.values().forEach(l -> l.sort(Comparator.naturalOrder()));
@@ -294,7 +294,7 @@ public final class SecureJavaToDataCellConverterRegistry {
         if (destinationType.isCollectionType()) {
             final Stream<FactoryItem> itemsForElementType =
                 getItemsByDestinationType(destinationType.getCollectionElementType(), origins)
-                    .map(SecureJavaToDataCellConverterRegistry::toCollectionFactoryItem);
+                    .map(OriginAwareJavaToDataCellConverterRegistry::toCollectionFactoryItem);
             itemsForDestType = Stream.concat(itemsForDestType, itemsForElementType);
         }
         return itemsForDestType.sorted()//
@@ -346,7 +346,7 @@ public final class SecureJavaToDataCellConverterRegistry {
         if (sourceType.isArray()) {
             final Stream<FactoryItem> itemsForElementType =
                 getItemsFromJavaHierarchy(sourceType.getComponentType(), origins)//
-                    .map(SecureJavaToDataCellConverterRegistry::toCollectionFactoryItem);
+                    .map(OriginAwareJavaToDataCellConverterRegistry::toCollectionFactoryItem);
             itemsForSourceType = Stream.concat(itemsForSourceType, itemsForElementType);
         }
         return itemsForSourceType.sorted()//
