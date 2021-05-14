@@ -58,10 +58,12 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.eclipse.core.runtime.IConfigurationElement;
@@ -138,8 +140,8 @@ public final class SecureJavaToDataCellConverterRegistry {
     private void registerFactoryMethodConverterFactory(final DataType dataType, final Method method,
         final DataCellFactoryMethod annotation) {
         try {
-            final FactoryMethodToDataCellConverterFactory<?, ?> factory = new FactoryMethodToDataCellConverterFactory<>(method,
-                ClassUtil.ensureObjectType(method.getParameterTypes()[0]), dataType, annotation.name());
+            final FactoryMethodToDataCellConverterFactory<?, ?> factory = new FactoryMethodToDataCellConverterFactory<>(
+                method, ClassUtil.ensureObjectType(method.getParameterTypes()[0]), dataType, annotation.name());
             // Check name of factory
             if (!JavaToDataCellConverterRegistry.validateFactoryName(factory)) {
                 return;
@@ -230,9 +232,28 @@ public final class SecureJavaToDataCellConverterRegistry {
 
     private List<JavaToDataCellConverterFactory<?>> getConverterFactoriesByIdentifier(final String identifier,
         final Set<Origin> origins) {
+        if (isCollectionIdentifier(identifier)) {
+            return createCollectionFactories(identifier, origins);
+        }
         return m_byIdentifier.getOrDefault(identifier, Collections.emptyList()).stream()//
             .filter(f -> origins.contains(f.m_origin))//
             .map(FactoryItem::getFactory)//
+            .collect(toList());
+    }
+
+    private static boolean isCollectionIdentifier(final String identifier) {
+        return identifier.startsWith(ArrayToCollectionConverterFactory.class.getName());
+    }
+
+    private List<JavaToDataCellConverterFactory<?>> createCollectionFactories(final String identifier,
+        final Set<Origin> origins) {
+        // get the element converter factory id:
+        final String elemConvFactoryId = identifier
+            .substring(ArrayToCollectionConverterFactory.class.getName().length() + 1, identifier.length() - 1);
+        final List<JavaToDataCellConverterFactory<?>> factories =
+            getConverterFactoriesByIdentifier(elemConvFactoryId, origins);
+        return factories.stream()//
+            .map(f -> new ArrayToCollectionConverterFactory<>(f))// NOSONAR function references don't support <>
             .collect(toList());
     }
 
@@ -269,10 +290,25 @@ public final class SecureJavaToDataCellConverterRegistry {
 
     private List<JavaToDataCellConverterFactory<?>>
         getConverterFactoriesByDestinationType(final DataType destinationType, final Set<Origin> origins) {
-        return m_byDestType.getOrDefault(destinationType, Collections.emptyList()).stream()//
-            .filter(f -> origins.contains(f.m_origin))//
+        Stream<FactoryItem> itemsForDestType = getItemsByDestinationType(destinationType, origins);
+        if (destinationType.isCollectionType()) {
+            final Stream<FactoryItem> itemsForElementType =
+                getItemsByDestinationType(destinationType.getCollectionElementType(), origins)
+                    .map(SecureJavaToDataCellConverterRegistry::toCollectionFactoryItem);
+            itemsForDestType = Stream.concat(itemsForDestType, itemsForElementType);
+        }
+        return itemsForDestType.sorted()//
             .map(FactoryItem::getFactory)//
             .collect(toList());
+    }
+
+    private static FactoryItem toCollectionFactoryItem(final FactoryItem item) {
+        return new FactoryItem(new ArrayToCollectionConverterFactory<>(item.getFactory()), item.m_origin);
+    }
+
+    private Stream<FactoryItem> getItemsByDestinationType(final DataType destinationType, final Set<Origin> origins) {
+        return m_byDestType.getOrDefault(destinationType, Collections.emptyList()).stream()//
+            .filter(i -> origins.contains(i.m_origin));
     }
 
     /**
@@ -284,7 +320,7 @@ public final class SecureJavaToDataCellConverterRegistry {
      * @return the factories registered for the provided sourceType (the list is empty if there are no factories for the
      *         sourceType)
      */
-    public <S> List<JavaToDataCellConverterFactory<S>> getConverterFactoriesBySourceType(final Class<S> sourceType) {
+    public List<JavaToDataCellConverterFactory<?>> getConverterFactoriesBySourceType(final Class<?> sourceType) {
         return getConverterFactoriesBySourceType(sourceType, EnumSet.allOf(Origin.class));
     }
 
@@ -299,19 +335,31 @@ public final class SecureJavaToDataCellConverterRegistry {
      * @return the factories registered for the provided sourceType from the provided origins (the list is empty if none
      *         of the origins provided a factory of sourceType)
      */
-    public <S> List<JavaToDataCellConverterFactory<S>> getConverterFactoriesBySourceType(final Class<S> sourceType,
+    public List<JavaToDataCellConverterFactory<?>> getConverterFactoriesBySourceType(final Class<?> sourceType,
         final Origin origin, final Origin... otherOrigins) {
         return getConverterFactoriesBySourceType(sourceType, EnumSet.of(origin, otherOrigins));
     }
 
-    @SuppressWarnings("unchecked") // the contract of JavaToDataCellConverterFactory ensures that the cast is safe
-    private <S> List<JavaToDataCellConverterFactory<S>> getConverterFactoriesBySourceType(final Class<S> sourceType,
+    private List<JavaToDataCellConverterFactory<?>> getConverterFactoriesBySourceType(final Class<?> sourceType,
         final Set<Origin> origins) {
-        return m_bySourceType.getOrDefault(sourceType, Collections.emptyList()).stream()//
-            .filter(f -> origins.contains(f.m_origin))//
+        Stream<FactoryItem> itemsForSourceType = getItemsFromJavaHierarchy(sourceType, origins);
+        if (sourceType.isArray()) {
+            final Stream<FactoryItem> itemsForElementType =
+                getItemsFromJavaHierarchy(sourceType.getComponentType(), origins)//
+                    .map(SecureJavaToDataCellConverterRegistry::toCollectionFactoryItem);
+            itemsForSourceType = Stream.concat(itemsForSourceType, itemsForElementType);
+        }
+        return itemsForSourceType.sorted()//
             .map(FactoryItem::getFactory)//
-            .map(f -> (JavaToDataCellConverterFactory<S>)f)//
             .collect(toList());
+    }
+
+    private <S> Stream<FactoryItem> getItemsFromJavaHierarchy(final Class<S> sourceType, final Set<Origin> origins) {
+        final Set<Class<?>> classesToConsider = new LinkedHashSet<>();
+        ClassUtil.recursiveMapToClassHierarchy(sourceType, classesToConsider::add);
+        return classesToConsider.stream()//
+            .flatMap(c -> m_bySourceType.getOrDefault(c, Collections.emptyList()).stream())//
+            .filter(f -> origins.contains(f.m_origin));
     }
 
     /**
@@ -400,9 +448,9 @@ public final class SecureJavaToDataCellConverterRegistry {
         @Override
         public int hashCode() {
             return new HashCodeBuilder()//
-                    .append(m_factory)//
-                    .append(m_origin)//
-                    .toHashCode();
+                .append(m_factory)//
+                .append(m_origin)//
+                .toHashCode();
         }
     }
 }
