@@ -101,6 +101,7 @@ import org.knime.core.node.workflow.WorkflowPersistor.LoadResult;
 import org.knime.core.node.workflow.action.InteractiveWebViewsResult;
 import org.knime.core.node.workflow.action.InteractiveWebViewsResult.Builder;
 import org.knime.core.node.workflow.execresult.NativeNodeContainerExecutionResult;
+import org.knime.core.node.workflow.execresult.NativeNodeContainerExecutionResult.NativeNodeContainerExecutionResultBuilder;
 import org.knime.core.node.workflow.execresult.NodeContainerExecutionResult;
 import org.knime.core.node.workflow.execresult.NodeContainerExecutionStatus;
 import org.knime.core.node.workflow.execresult.NodeExecutionResult;
@@ -1061,7 +1062,7 @@ public class NativeNodeContainer extends SingleNodeContainer {
                 }
             }
             if (needsReset) {
-                execResult.setNeedsResetAfterLoad();
+//                execResult.setNeedsResetAfterLoad();
             }
         }
     }
@@ -1071,7 +1072,7 @@ public class NativeNodeContainer extends SingleNodeContainer {
     public NativeNodeContainerExecutionResult createExecutionResult(
             final ExecutionMonitor exec) throws CanceledExecutionException {
         synchronized (m_nodeMutex) {
-            NativeNodeContainerExecutionResult result = new NativeNodeContainerExecutionResult();
+            NativeNodeContainerExecutionResultBuilder result = NativeNodeContainerExecutionResult.builder();
             super.saveExecutionResult(result);
             NodeContext.pushContext(this);
             try {
@@ -1079,7 +1080,7 @@ public class NativeNodeContainer extends SingleNodeContainer {
             } finally {
                 NodeContext.removeLastContext();
             }
-            return result;
+            return result.build();
         }
     }
 
